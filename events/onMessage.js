@@ -10,6 +10,8 @@ async function onMessage(client, message) {
   if (message.author.bot) return;
   if (!message.guild) return;
 
+  console.log(`[DEBUG] Pesan dari ${message.author.tag} | content: "${message.content}" | channel: ${message.channel.name}`);
+
   try {
     const detections = analyzeMessage(message);
 
