@@ -1,0 +1,14 @@
+{
+    "name": "aegis",
+    "version": "1.0.0",
+    "description": "Aegis Security Bot",
+    "main": "index.js",
+    "scripts": {
+      "start": "node index.js"
+    },
+    "dependencies": {
+      "discord.js": "^14.0.0",
+      "dotenv": "^16.0.0"
+    },
+    "license": "ISC"
+  }
