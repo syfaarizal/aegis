@@ -6,18 +6,38 @@ const { logDetection } = require("../actions/logger");
  * Dipanggil setiap kali ada pesan baru di server.
  */
 async function onMessage(client, message) {
-  // Skip bot (termasuk diri sendiri) dan pesan DM
+  // Skip bot dan DM
   if (message.author.bot) return;
   if (!message.guild) return;
 
-  console.log(`[DEBUG] Pesan dari ${message.author.tag} | content: "${message.content}" | channel: ${message.channel.name}`);
+  const tag = message.author.tag;
+  const channelName = message.channel.name || message.channel.id;
+  const contentPreview = message.content
+    ? `"${message.content.slice(0, 60)}"`
+    : "(kosong)";
+  const attachCount = message.attachments.size;
+
+  console.log(
+    `[Aegis] 📨 ${tag} → #${channelName} | content: ${contentPreview} | attachments: ${attachCount}`
+  );
+
+  // Kalau content kosong DAN tidak ada attachment, kemungkinan intent belum aktif
+  if (!message.content && attachCount === 0) {
+    console.log(`[Aegis] ⚠️  Pesan kosong dari ${tag} — kemungkinan MESSAGE CONTENT INTENT belum aktif!`);
+    return;
+  }
 
   try {
     const detections = analyzeMessage(message);
 
+    if (detections.length === 0) {
+      console.log(`[Aegis] ✅ Aman — belum ada duplikat cross-channel`);
+      return;
+    }
+
     for (const detection of detections) {
       console.log(
-        `[Aegis] Spam terdeteksi — User: ${message.author.tag} | Tipe: ${detection.type} | ${detection.channelCount} channel`
+        `[Aegis] 🚨 SPAM DETECTED — ${tag} | tipe: ${detection.type} | ${detection.channelCount} channel`
       );
       await logDetection(client, message, detection);
     }
