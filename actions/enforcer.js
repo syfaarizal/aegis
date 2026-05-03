@@ -1,60 +1,46 @@
 const { DELETE_DELAY_MS, TIMEOUT_DURATION_MS, TIMEOUT_REASON } = require("../config");
 
-/**
- * Delay helper — biar gak kena rate limit Discord.
- */
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
 /**
- * Cek apakah bot bisa timeout member ini.
- * Gak bisa timeout: admin, owner, atau role lebih tinggi dari bot.
- */
-function canTimeout(guild, member) {
-  if (!member) return false;
-  if (!guild.members.me) return false;
-
-  // Owner server tidak bisa di-timeout
-  if (member.id === guild.ownerId) return false;
-
-  // Admin permission tidak bisa di-timeout
-  if (member.permissions.has("Administrator")) return false;
-
-  // Role bot harus lebih tinggi dari role tertinggi target
-  const botHighestRole = guild.members.me.roles.highest.position;
-  const targetHighestRole = member.roles.highest.position;
-  return botHighestRole > targetHighestRole;
-}
-
-/**
  * Kumpulkan semua pesan spam dari channels yang terdampak.
- * Return array of Discord Message objects.
+ * Return array of Discord Message objects (deduplicated by message ID).
  */
 async function collectSpamMessages(guild, detection, triggerMessage) {
-  const collected = [triggerMessage]; // mulai dari pesan yang trigger deteksi
+  const collected = new Map(); // messageId → Message (biar gak dobel)
   const userId = detection.userId;
 
-  for (const channelInfo of detection.channels) {
-    // Skip channel dari trigger message (udah di-collect)
-    if (channelInfo.id === triggerMessage.channel.id) continue;
+  // Masukkan trigger message dulu
+  collected.set(triggerMessage.id, triggerMessage);
 
+  // Deduplicate channel IDs dari detection — channel bisa muncul >1x di entries
+  const uniqueChannelIds = [...new Set(detection.channels.map((c) => c.id))];
+  console.log(`[Aegis] 🔍 Scanning ${uniqueChannelIds.length} channel unik...`);
+
+  for (const channelId of uniqueChannelIds) {
     try {
-      const channel = await guild.channels.fetch(channelInfo.id).catch(() => null);
+      const channel = await guild.channels.fetch(channelId).catch(() => null);
       if (!channel || !channel.isTextBased()) continue;
 
-      // Fetch 20 pesan terakhir, cari yang milik spammer
-      const messages = await channel.messages.fetch({ limit: 20 });
+      // Fetch 30 pesan terakhir, cari yang milik spammer dalam window waktu
+      const messages = await channel.messages.fetch({ limit: 30 });
       const spamMsgs = messages.filter(
-        (m) => m.author.id === userId &&
-               Date.now() - m.createdTimestamp < 20_000 // dalam 20 detik terakhir
+        (m) =>
+          m.author.id === userId &&
+          Date.now() - m.createdTimestamp < 30_000 // perluas ke 30 detik
       );
 
-      collected.push(...spamMsgs.values());
+      for (const msg of spamMsgs.values()) {
+        collected.set(msg.id, msg); // Map otomatis deduplicate by ID
+      }
+
+      console.log(`[Aegis] 📥 #${channel.name}: ${spamMsgs.size} pesan ditemukan`);
     } catch (err) {
-      console.error(`[Aegis] Gagal fetch messages dari channel ${channelInfo.id}:`, err.message);
+      console.error(`[Aegis] Gagal fetch channel ${channelId}:`, err.message);
     }
   }
 
-  return collected;
+  return [...collected.values()];
 }
 
 /**
@@ -85,31 +71,40 @@ async function deleteSpamMessages(messages) {
 
 /**
  * Timeout user yang spam.
- * Return { success, reason } — reason berisi kenapa kalau gagal.
+ * Return { applied, reason }
  */
 async function timeoutUser(guild, userId) {
   try {
     const member = await guild.members.fetch(userId).catch(() => null);
-    if (!member) return { success: false, reason: "Member tidak ditemukan" };
+    if (!member) return { applied: false, reason: "Member tidak ditemukan di server" };
 
-    if (!canTimeout(guild, member)) {
-      return { success: false, reason: "User punya permission lebih tinggi dari bot" };
+    // Cek canTimeout dan langsung return reason spesifik
+    if (!guild.members.me) {
+      return { applied: false, reason: "Bot tidak ditemukan sebagai member" };
+    }
+    if (member.id === guild.ownerId) {
+      return { applied: false, reason: "Tidak bisa timeout owner server" };
+    }
+    if (member.permissions.has("Administrator")) {
+      return { applied: false, reason: "Target punya permission Administrator" };
+    }
+    const botPos = guild.members.me.roles.highest.position;
+    const targetPos = member.roles.highest.position;
+    if (botPos <= targetPos) {
+      return { applied: false, reason: `Role bot (pos: ${botPos}) lebih rendah dari target (pos: ${targetPos})` };
     }
 
     await member.timeout(TIMEOUT_DURATION_MS, TIMEOUT_REASON);
-    console.log(`[Aegis] ⏱️  User ${member.user.tag} di-timeout ${TIMEOUT_DURATION_MS / 1000}s`);
-    return { success: true, reason: null };
+    console.log(`[Aegis] ⏱️  ${member.user.tag} di-timeout ${TIMEOUT_DURATION_MS / 1000}s`);
+    return { applied: true, reason: null };
   } catch (err) {
     console.error(`[Aegis] Gagal timeout user ${userId}:`, err.message);
-    return { success: false, reason: err.message };
+    return { applied: false, reason: err.message };
   }
 }
 
 /**
- * Main enforcer — jalankan semua aksi sekaligus:
- * collect → delete → timeout
- *
- * Return summary hasil eksekusi.
+ * Main enforcer — collect → delete → timeout
  */
 async function enforce(guild, detection, triggerMessage) {
   const summary = {
@@ -117,16 +112,15 @@ async function enforce(guild, detection, triggerMessage) {
     timeout: { applied: false, reason: null },
   };
 
-  // 1. Kumpulin semua pesan spam
+  // 1. Collect semua pesan spam
   const spamMessages = await collectSpamMessages(guild, detection, triggerMessage);
-  console.log(`[Aegis] 📦 Collected ${spamMessages.length} pesan spam`);
+  console.log(`[Aegis] 📦 Total ${spamMessages.length} pesan akan dihapus`);
 
-  // 2. Delete semua sekaligus (dengan delay)
+  // 2. Delete dengan delay
   summary.messagesDeleted = await deleteSpamMessages(spamMessages);
 
-  // 3. Timeout user
-  const timeoutResult = await timeoutUser(guild, detection.userId);
-  summary.timeout = timeoutResult;
+  // 3. Timeout — result sudah pakai { applied, reason }
+  summary.timeout = await timeoutUser(guild, detection.userId);
 
   return summary;
 }
