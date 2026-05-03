@@ -1,13 +1,30 @@
 module.exports = {
-    // Window deteksi dalam milidetik (default: 15 detik)
-    DETECTION_WINDOW_MS: 15_000,
-  
-    // Berapa channel yang sama = dianggap spam
-    DUPLICATE_CHANNEL_THRESHOLD: 2,
-  
-    // Channel ID untuk log admin (isi di .env)
-    LOG_CHANNEL_ID: process.env.LOG_CHANNEL_ID,
-  
-    // Bot token
-    BOT_TOKEN: process.env.BOT_TOKEN,
-  };
+  // ── Detection ───────────────────────────────────────────
+  // Window deteksi dalam milidetik
+  DETECTION_WINDOW_MS: 15_000,
+
+  // Minimum channel berbeda yang dianggap spam
+  DUPLICATE_CHANNEL_THRESHOLD: 2,
+
+  // ── Anti False Positive ─────────────────────────────────
+  // Minimum panjang teks yang di-track (abaikan pesan super pendek)
+  MIN_TEXT_LENGTH: 10,
+
+  // Abaikan user yang punya role ini (nama role, case-insensitive)
+  IGNORED_ROLES: ["admin", "moderator", "mod", "staff"],
+
+  // ── Auto Delete ─────────────────────────────────────────
+  // Delay antar delete (ms) biar gak kena rate limit Discord
+  DELETE_DELAY_MS: 300,
+
+  // ── Timeout ─────────────────────────────────────────────
+  // Durasi timeout dalam milidetik (default: 5 menit)
+  TIMEOUT_DURATION_MS: 5 * 60 * 1000,
+
+  // Alasan timeout yang muncul di audit log Discord
+  TIMEOUT_REASON: "Aegis: Spam terdeteksi — pesan duplikat di multiple channel",
+
+  // ── Credentials ─────────────────────────────────────────
+  LOG_CHANNEL_ID: process.env.LOG_CHANNEL_ID,
+  BOT_TOKEN: process.env.BOT_TOKEN,
+};
