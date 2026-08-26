@@ -73,7 +73,7 @@ async function handleSetup(interaction) {
       if (ch) resolvedLogChannel = { name: ch.name, id: ch.id };
     }
     const embed = buildCurrentConfigEmbed(guildId, guildName, resolvedLogChannel);
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await interaction.reply({ embeds: [embed], flags: 64 });
     return;
   }
 
