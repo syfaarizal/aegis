@@ -11,6 +11,9 @@ async function collectSpamMessages(guild, detection, triggerMessage) {
   const collected = new Map(); // messageId → Message (biar gak dobel)
   const userId = detection.userId;
 
+  console.log(`[Aegis] 🔍 Collect: userId=${userId}, hash=${detection.hash}, triggerMsg=${triggerMessage.id}`);
+  console.log(`[Aegis] 🔍 Channels di detection: ${detection.channels.map((c) => `${c.id}(${c.name})`).join(", ")}`);
+
   // Masukkan trigger message dulu
   collected.set(triggerMessage.id, triggerMessage);
 
@@ -19,16 +22,24 @@ async function collectSpamMessages(guild, detection, triggerMessage) {
   console.log(`[Aegis] 🔍 Scanning ${uniqueChannelIds.length} channel unik...`);
 
   // Gunakan timestamp minimum dari detection sebagai window start
-  // Ini确保 pesan terdeteksi (bisa >30 detik lalu) ikut terhapus
+  // Ini memastikan pesan terdeteksi (bisa >30 detik lalu) ikut terhapus
   const earliestTimestamp = Math.min(...detection.channels.map((c) => c.timestamp));
   const windowMs = Date.now() - earliestTimestamp + 5_000; // +5s buffer
-  console.log(`[Aegis] ⏱️  Window scan: ${Math.round(windowMs / 1000)} detik`);
+  console.log(`[Aegis] 🔍 Window: earliest=${new Date(earliestTimestamp).toISOString()}, ms=${Math.round(windowMs / 1000)}s`);
 
   for (const channelId of uniqueChannelIds) {
     try {
       const channel = await guild.channels.fetch(channelId).catch(() => null);
-      if (!channel || !channel.isTextBased()) continue;
+      if (!channel) {
+        console.log(`[Aegis] 🔍   #${channelId}: channel tidak ditemukan`);
+        continue;
+      }
+      if (!channel.isTextBased()) {
+        console.log(`[Aegis] 🔍   #${channel.name}: bukan text channel`);
+        continue;
+      }
 
+      console.log(`[Aegis] 🔍   #${channel.name}: fetching 30 pesan...`);
       // Fetch pesan yang milik spammer dalam window deteksi
       const messages = await channel.messages.fetch({ limit: 30 });
       const spamMsgs = messages.filter(
@@ -37,16 +48,16 @@ async function collectSpamMessages(guild, detection, triggerMessage) {
           Date.now() - m.createdTimestamp < windowMs
       );
 
+      console.log(`[Aegis] 🔍   #${channel.name}: ${messages.size} fetched, ${spamMsgs.size} match spammer+window`);
       for (const msg of spamMsgs.values()) {
         collected.set(msg.id, msg); // Map otomatis deduplicate by ID
       }
-
-      console.log(`[Aegis] 📥 #${channel.name}: ${spamMsgs.size} pesan ditemukan`);
     } catch (err) {
-      console.error(`[Aegis] Gagal fetch channel ${channelId}:`, err.message);
+      console.error(`[Aegis] 🔍   Gagal fetch channel ${channelId}:`, err.message);
     }
   }
 
+  console.log(`[Aegis] 🔍 Total collected: ${collected.size} pesan`);
   return [...collected.values()];
 }
 
@@ -59,11 +70,19 @@ async function deleteSpamMessages(messages, guildId) {
   const guildCfg = getGuildConfig(guildId);
   const deleteDelay = guildCfg ? guildCfg.deleteDelayMs : DELETE_DELAY_MS;
 
+  console.log(`[Aegis] 🗑️  Mulai hapus ${messages.length} pesan (delay=${deleteDelay}ms)...`);
+
   for (const msg of messages) {
-    await msg.delete().catch((err) => {
-      if (err.code !== 10008) {
-        console.error(`[Aegis] Gagal hapus pesan ${msg.id}:`, err.message);
+    console.log(`[Aegis] 🗑️    delete msg ${msg.id} (${msg.createdAt.toISOString()})...`);
+    const result = await msg.delete().catch((err) => {
+      if (err.code === 10008) {
+        console.log(`[Aegis] 🗑️    msg ${msg.id} sudah dihapus sebelumnya`);
+      } else if (err.code === 50013) {
+        console.error(`[Aegis] 🗑️    GAGAL — bot tidak punya permission hapus pesan di channel`);
+      } else {
+        console.error(`[Aegis] 🗑️    Gagal hapus msg ${msg.id}: ${err.message} (code: ${err.code})`);
       }
+      return err;
     });
     deleted++;
 
@@ -72,7 +91,7 @@ async function deleteSpamMessages(messages, guildId) {
     }
   }
 
-  console.log(`[Aegis] 🗑️  ${deleted} pesan spam dihapus`);
+  console.log(`[Aegis] 🗑️  Selesai: ${deleted}/${messages.length} dihapus`);
   return deleted;
 }
 
