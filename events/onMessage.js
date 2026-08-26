@@ -1,6 +1,6 @@
 const { analyzeMessage } = require("../core/detector");
 const { enforce } = require("../actions/enforcer");
-const { logDetection } = require("../actions/logger");
+const { logDetections, logActions } = require("../actions/logger");
 
 // Cooldown per user biar gak spam action (enforce hanya sekali per X detik)
 const enforceCooldown = new Map(); // userId → timestamp
@@ -37,31 +37,31 @@ async function onMessage(client, message) {
       return;
     }
 
-    for (const detection of detections) {
-      console.log(
-        `[Aegis] 🚨 SPAM — ${tag} | tipe: ${detection.type} | ${detection.channelCount} channel`
-      );
+    // Batch console log detections
+    console.log(
+      `[Aegis] 🚨 ${detections.length} deteksi spam dari ${tag} | tipe: ${detections.map((d) => d.type).join(", ")}`
+    );
 
-      // Cek cooldown — hindari double enforce untuk user yang sama
-      const lastEnforce = enforceCooldown.get(detection.userId) || 0;
-      const onCooldown = Date.now() - lastEnforce < COOLDOWN_MS;
+    // Kirim 1 embed ringkasan deteksi (bukan per-detection)
+    await logDetections(client, message, detections);
 
-      let summary = null;
+    // Cek cooldown — enforce hanya sekali per batch
+    const lastEnforce = enforceCooldown.get(message.author.id) || 0;
+    const onCooldown = Date.now() - lastEnforce < COOLDOWN_MS;
 
-      if (!onCooldown) {
-        enforceCooldown.set(detection.userId, Date.now());
+    if (!onCooldown) {
+      enforceCooldown.set(message.author.id, Date.now());
 
-        // Jalankan: collect → delete → timeout
-        summary = await enforce(message.guild, detection, message);
+      // Jalankan: collect → delete → timeout
+      const summary = await enforce(message.guild, detections[0], message);
 
-        // Cleanup cooldown setelah selesai
-        setTimeout(() => enforceCooldown.delete(detection.userId), COOLDOWN_MS);
-      } else {
-        console.log(`[Aegis] ⏭️  ${tag} masih dalam cooldown enforce, skip action`);
-      }
+      // Cleanup cooldown setelah selesai
+      setTimeout(() => enforceCooldown.delete(message.author.id), COOLDOWN_MS);
 
-      // Log ke admin channel (dengan atau tanpa summary)
-      await logDetection(client, message, detection, summary);
+      // Kirim 1 embed hasil action
+      await logActions(client, message.guild.id, summary);
+    } else {
+      console.log(`[Aegis] ⏭️  ${tag} masih dalam cooldown enforce, skip action`);
     }
   } catch (err) {
     console.error("[Aegis] Error saat proses pesan:", err);

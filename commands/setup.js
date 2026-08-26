@@ -1,27 +1,6 @@
 const { EmbedBuilder } = require("discord.js");
 const { getGuildConfig, setGuildConfig, DEFAULT_CONFIG } = require("../guildConfig");
 
-const THRESHOLD_CHOICES = [
-  { name: "2 channel (Default)", value: 2 },
-  { name: "3 channel", value: 3 },
-  { name: "4 channel", value: 4 },
-  { name: "5 channel", value: 5 },
-];
-
-const WINDOW_CHOICES = [
-  { name: "15 detik (Default)", value: 15_000 },
-  { name: "30 detik", value: 30_000 },
-  { name: "1 menit", value: 60_000 },
-  { name: "2 menit", value: 120_000 },
-];
-
-const TIMEOUT_CHOICES = [
-  { name: "5 menit (Default)", value: 300_000 },
-  { name: "10 menit", value: 600_000 },
-  { name: "15 menit", value: 900_000 },
-  { name: "30 menit", value: 1_800_000 },
-];
-
 function formatMs(ms) {
   const minutes = Math.floor(ms / 60_000);
   if (minutes < 60) return `${minutes} menit`;
@@ -31,7 +10,7 @@ function formatMs(ms) {
 /**
  * Build current config embed for a guild.
  */
-function buildCurrentConfigEmbed(guildId, guildName) {
+function buildCurrentConfigEmbed(guildId, guildName, logChannel) {
   const cfg = getGuildConfig(guildId);
   const enabled = cfg ? cfg.enabled : true;
   const threshold = cfg ? cfg.duplicateChannelThreshold : DEFAULT_CONFIG.duplicateChannelThreshold;
@@ -39,6 +18,10 @@ function buildCurrentConfigEmbed(guildId, guildName) {
   const minLen = cfg ? cfg.minTextLength : DEFAULT_CONFIG.minTextLength;
   const timeout = cfg ? cfg.timeoutDurationMs : DEFAULT_CONFIG.timeoutDurationMs;
   const ignoredRoles = cfg ? cfg.ignoredRoles.join(", ") : DEFAULT_CONFIG.ignoredRoles.join(", ");
+
+  const logChannelLine = logChannel
+    ? `${logChannel.name} (\`${logChannel.id}\`)`
+    : `\`${cfg && cfg.logChannelId ? cfg.logChannelId : "default"}\``;
 
   return new EmbedBuilder()
     .setColor(0x2ecc71)
@@ -50,6 +33,7 @@ function buildCurrentConfigEmbed(guildId, guildName) {
       { name: "⏱️ Window Deteksi", value: formatMs(window), inline: true },
       { name: "📝 Min Text Length", value: `${minLen} karakter`, inline: true },
       { name: "⏳ Timeout", value: formatMs(timeout), inline: true },
+      { name: "📢 Log Channel", value: logChannelLine, inline: true },
       { name: "🚫 Ignored Roles", value: `\`${ignoredRoles}\``, inline: false }
     )
     .setFooter({ text: "Gunakan /aegis setup untuk mengubah konfigurasi" })
@@ -71,10 +55,22 @@ async function handleSetup(interaction) {
   const timeout = interaction.options.getInteger("timeout");
   const minlength = interaction.options.getInteger("minlength");
   const ignoredroles = interaction.options.getString("ignoredroles");
+  const logchannel = interaction.options.getChannel("log_channel");
+
+  // Resolve log channel name for display
+  const logChannelObj = logchannel
+    ? { name: logchannel.name, id: logchannel.id }
+    : null;
 
   // Jika tidak ada option, tampilkan config saat ini
-  if (!enabled && !threshold && !window && !timeout && !minlength && !ignoredroles) {
-    const embed = buildCurrentConfigEmbed(guildId, guildName);
+  if (!enabled && !threshold && !window && !timeout && !minlength && !ignoredroles && !logchannel) {
+    const cfg = getGuildConfig(guildId);
+    let resolvedLogChannel = null;
+    if (cfg && cfg.logChannelId) {
+      const ch = await interaction.guild.channels.fetch(cfg.logChannelId).catch(() => null);
+      if (ch) resolvedLogChannel = { name: ch.name, id: ch.id };
+    }
+    const embed = buildCurrentConfigEmbed(guildId, guildName, resolvedLogChannel);
     await interaction.reply({ embeds: [embed], ephemeral: true });
     return;
   }
@@ -89,13 +85,14 @@ async function handleSetup(interaction) {
   if (ignoredroles !== null) {
     overrides.ignoredRoles = ignoredroles.split(",").map((r) => r.trim().toLowerCase()).filter(Boolean);
   }
+  if (logchannel !== null) overrides.logChannelId = logchannel.id;
 
   setGuildConfig(guildId, overrides);
 
-  const embed = buildCurrentConfigEmbed(guildId, guildName);
+  const embed = buildCurrentConfigEmbed(guildId, guildName, logChannelObj);
   embed.setColor(0xf5a623).setTitle("🛡️ Aegis — Config Updated");
 
   await interaction.reply({ embeds: [embed], ephemeral: true });
 }
 
-module.exports = { handleSetup, buildCurrentConfigEmbed, THRESHOLD_CHOICES, WINDOW_CHOICES, TIMEOUT_CHOICES };
+module.exports = { handleSetup, buildCurrentConfigEmbed };

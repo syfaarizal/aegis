@@ -72,7 +72,7 @@ async function deleteSpamMessages(messages, guildId) {
 
 /**
  * Timeout user yang spam.
- * Return { applied, reason }
+ * Return { applied, reason, skipped, duration }
  */
 async function timeoutUser(guild, userId, guildId) {
   try {
@@ -81,29 +81,30 @@ async function timeoutUser(guild, userId, guildId) {
     const timeoutReason = guildCfg ? guildCfg.timeoutReason : TIMEOUT_REASON;
 
     const member = await guild.members.fetch(userId).catch(() => null);
-    if (!member) return { applied: false, reason: "Member tidak ditemukan di server" };
+    if (!member) return { applied: false, reason: "Member tidak ditemukan di server", skipped: false, duration: 0 };
+    if (!guild.members.me) return { applied: false, reason: "Bot tidak ditemukan sebagai member", skipped: false, duration: 0 };
 
-    if (!guild.members.me) {
-      return { applied: false, reason: "Bot tidak ditemukan sebagai member" };
-    }
+    // Owner tidak di-timeout
     if (member.id === guild.ownerId) {
-      return { applied: false, reason: "Tidak bisa timeout owner server" };
+      return { applied: false, reason: "Owner server", skipped: true, duration: 0 };
     }
+    // Admin di-delete pesannya tapi TIDAK di-timeout
     if (member.permissions.has("Administrator")) {
-      return { applied: false, reason: "Target punya permission Administrator" };
+      return { applied: false, reason: "Admin — pesan dihapus, timeout dilewati", skipped: true, duration: 0 };
     }
+    // Cek role hierarchy
     const botPos = guild.members.me.roles.highest.position;
     const targetPos = member.roles.highest.position;
     if (botPos <= targetPos) {
-      return { applied: false, reason: `Role bot (pos: ${botPos}) lebih rendah dari target (pos: ${targetPos})` };
+      return { applied: false, reason: `Role bot (pos: ${botPos}) lebih rendah dari target (pos: ${targetPos})`, skipped: false, duration: 0 };
     }
 
     await member.timeout(timeoutDuration, timeoutReason);
     console.log(`[Aegis] ⏱️  ${member.user.tag} di-timeout ${timeoutDuration / 1000}s`);
-    return { applied: true, reason: null };
+    return { applied: true, reason: null, skipped: false, duration: timeoutDuration };
   } catch (err) {
     console.error(`[Aegis] Gagal timeout user ${userId}:`, err.message);
-    return { applied: false, reason: err.message };
+    return { applied: false, reason: err.message, skipped: false, duration: 0 };
   }
 }
 
@@ -113,7 +114,7 @@ async function timeoutUser(guild, userId, guildId) {
 async function enforce(guild, detection, triggerMessage) {
   const summary = {
     messagesDeleted: 0,
-    timeout: { applied: false, reason: null },
+    timeout: { applied: false, reason: null, skipped: false, duration: 0 },
   };
 
   // 1. Collect semua pesan spam
@@ -123,7 +124,7 @@ async function enforce(guild, detection, triggerMessage) {
   // 2. Delete dengan delay
   summary.messagesDeleted = await deleteSpamMessages(spamMessages, guild.id);
 
-  // 3. Timeout — result sudah pakai { applied, reason }
+  // 3. Timeout — result sudah pakai { applied, reason, skipped, duration }
   summary.timeout = await timeoutUser(guild, detection.userId, guild.id);
 
   return summary;

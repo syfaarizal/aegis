@@ -64,6 +64,12 @@ const AEGIS_COMMANDS = [
             .setDescription("Role yang diabaikan (koma-separated)")
             .setRequired(false)
         )
+        .addChannelOption((opt) =>
+          opt
+            .setName("log_channel")
+            .setDescription("Channel untuk notifikasi log Aegis")
+            .setRequired(false)
+        )
     )
     .toJSON(),
 ];

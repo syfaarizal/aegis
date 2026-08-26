@@ -1,16 +1,19 @@
 const { EmbedBuilder } = require("discord.js");
-const { LOG_CHANNEL_ID, TIMEOUT_DURATION_MS } = require("../config");
+const { getGuildConfig } = require("../guildConfig");
+const { LOG_CHANNEL_ID } = require("../config");
 
-// Warna dan emoji per tipe deteksi
 const TYPE_META = {
   text:  { emoji: "💬", color: 0xf5a623, label: "Teks Duplikat"   },
   link:  { emoji: "🔗", color: 0xe74c3c, label: "Link Duplikat"   },
   image: { emoji: "🖼️", color: 0x9b59b6, label: "Gambar Duplikat" },
 };
 
-/**
- * Format durasi timeout ke string yang readable.
- */
+function formatMs(ms) {
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 60) return `${minutes} menit`;
+  return `${Math.floor(minutes / 60)} jam ${Math.floor(minutes % 60)} menit`;
+}
+
 function formatDuration(ms) {
   const minutes = Math.floor(ms / 60_000);
   if (minutes < 60) return `${minutes} menit`;
@@ -18,41 +21,50 @@ function formatDuration(ms) {
 }
 
 /**
- * Kirim embed log ke admin channel, include hasil enforce.
+ * Kirim embed log ke guild-specific atau global log channel.
  */
-async function logDetection(client, message, detection, enforceSummary = null) {
-  const logChannel = await client.channels.fetch(LOG_CHANNEL_ID).catch(() => null);
+async function fetchLogChannel(client, guildId) {
+  const guildCfg = getGuildConfig(guildId);
+  const channelId = guildCfg && guildCfg.logChannelId ? guildCfg.logChannelId : LOG_CHANNEL_ID;
+  if (!channelId) return null;
+  return client.channels.fetch(channelId).catch(() => null);
+}
+
+/**
+ * Kirim 1 embed ringkasan deteksi per batch (bukan per detection).
+ * Digunakan baik ada action maupun tidak.
+ */
+async function logDetections(client, message, detections) {
+  if (detections.length === 0) return;
+
+  const guildId = message.guild.id;
+  const logChannel = await fetchLogChannel(client, guildId);
   if (!logChannel) {
-    console.error("[Aegis] Log channel tidak ditemukan! Cek LOG_CHANNEL_ID di .env");
+    console.log("[Aegis] ⚠️ Log channel tidak ditemukan — skip log");
     return;
   }
 
-  const meta = TYPE_META[detection.type] || TYPE_META.text;
-  const user = message.author;
-
-  // Format list channel yang terdampak
-  const channelList = detection.channels
-    .map((c) => `• <#${c.id}> (\`#${c.name}\`) — <t:${Math.floor(c.timestamp / 1000)}:T>`)
-    .join("\n");
-
-  // Status timeout
-  let timeoutStatus = "⏳ Belum diproses";
-  if (enforceSummary) {
-    if (enforceSummary.timeout.applied) {
-      timeoutStatus = `✅ Di-timeout selama **${formatDuration(TIMEOUT_DURATION_MS)}**`;
-    } else {
-      timeoutStatus = `⚠️ Gagal: ${enforceSummary.timeout.reason}`;
-    }
+  // Aggregate per tipe
+  const byType = {};
+  for (const d of detections) {
+    if (!byType[d.type]) byType[d.type] = { count: 0, channels: new Set() };
+    byType[d.type].count++;
+    for (const c of d.channels) byType[d.type].channels.add(c.id);
   }
 
-  // Jumlah pesan yang dihapus
-  const deleteStatus = enforceSummary
-    ? `🗑️ ${enforceSummary.messagesDeleted} pesan dihapus`
-    : "⏳ Belum diproses";
+  const user = message.author;
+  const totalChannels = new Set(detections.flatMap((d) => d.channels.map((c) => c.id))).size;
+
+  const typeLines = Object.entries(byType)
+    .map(([type, data]) => {
+      const meta = TYPE_META[type] || TYPE_META.text;
+      return `${meta.emoji} **${meta.label}** — ${data.count}x, ${data.channels.size} channel`;
+    })
+    .join("\n");
 
   const embed = new EmbedBuilder()
-    .setColor(meta.color)
-    .setTitle(`${meta.emoji}  Aegis — ${meta.label} Terdeteksi`)
+    .setColor(0xf39c12)
+    .setTitle("🚨 Aegis — Spam Terdeteksi")
     .setThumbnail(user.displayAvatarURL({ dynamic: true }))
     .addFields(
       {
@@ -61,49 +73,57 @@ async function logDetection(client, message, detection, enforceSummary = null) {
         inline: true,
       },
       {
-        name: "📊 Spread",
-        value: `Dikirim ke **${detection.channelCount} channel** berbeda`,
+        name: "📊 Deteksi",
+        value: `${detections.length} jenis spam terdeteksi\n${totalChannels} channel berbeda`,
         inline: true,
-      },
-      {
-        name: "\u200B",
-        value: "\u200B",
-        inline: true,
-      },
-      {
-        name: "📡 Channel Terdampak",
-        value: channelList || "—",
-      },
+      }
+    )
+    .addFields({ name: "🔍 Tipe", value: typeLines })
+    .setTimestamp()
+    .setFooter({ text: "Aegis Security", iconURL: client.user.displayAvatarURL() });
+
+  await logChannel.send({ embeds: [embed] });
+}
+
+/**
+ * Kirim 1 embed hasil action (delete + timeout) per batch.
+ */
+async function logActions(client, guildId, actionSummary) {
+  if (!actionSummary) return;
+
+  const logChannel = await fetchLogChannel(client, guildId);
+  if (!logChannel) return;
+
+  let timeoutLine;
+  if (actionSummary.timeout.applied) {
+    timeoutLine = `✅ Timeout **${formatDuration(actionSummary.timeoutDuration)}**`;
+  } else if (actionSummary.timeoutSkipped) {
+    timeoutLine = `⏭️ Timeout dilewati — Admin`;
+  } else if (actionSummary.timeout.reason) {
+    timeoutLine = `⚠️ Gagal: ${actionSummary.timeout.reason}`;
+  } else {
+    timeoutLine = `❌ Tidak diterapkan`;
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(0x2ecc71)
+    .setTitle("✅ Aegis — Action Taken")
+    .addFields(
       {
         name: "🗑️ Pesan Dihapus",
-        value: deleteStatus,
+        value: `${actionSummary.messagesDeleted} pesan`,
         inline: true,
       },
       {
         name: "⏱️ Timeout",
-        value: timeoutStatus,
+        value: timeoutLine,
         inline: true,
       }
     )
     .setTimestamp()
     .setFooter({ text: "Aegis Security", iconURL: client.user.displayAvatarURL() });
 
-  // Info tambahan per tipe
-  if (detection.type === "link" && detection.link) {
-    embed.addFields({ name: "🔗 Link", value: `\`${detection.link}\`` });
-  }
-  if (detection.type === "image" && detection.filename) {
-    embed.addFields({ name: "📎 File", value: `\`${detection.filename}\`` });
-  }
-  if (detection.type === "text" && message.content) {
-    const preview = message.content.slice(0, 200);
-    embed.addFields({
-      name: "📝 Preview",
-      value: `\`\`\`${preview}${message.content.length > 200 ? "..." : ""}\`\`\``,
-    });
-  }
-
   await logChannel.send({ embeds: [embed] });
 }
 
-module.exports = { logDetection };
+module.exports = { logDetections, logActions, fetchLogChannel };
