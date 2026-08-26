@@ -36,24 +36,27 @@ async function collectSpamMessages(guild, detection, triggerMessage, deletedSet)
         console.log(`[Aegis] 🔍   #${channelId}: channel tidak ditemukan`);
         continue;
       }
-      if (!channel.isTextBased()) {
-        console.log(`[Aegis] 🔍   #${channel.name}: bukan text channel`);
-        continue;
-      }
 
-      console.log(`[Aegis] 🔍   #${channel.name}: fetching 30 pesan...`);
-      // Fetch pesan yang milik spammer dalam window deteksi
-      const messages = await channel.messages.fetch({ limit: 30 });
+      // Forum channel — fetch pesan dari channel utama
+      // (pesan di dalam thread punya threadId berbeda di detection)
+      console.log(`[Aegis] 🔍   #${channel.name} (type: ${channel.type}): fetching 30 pesan...`);
+      const messages = await channel.messages.fetch({ limit: 30 }).catch((err) => {
+        // Forum parent channel mungkin tidak punya pesan langsung
+        console.log(`[Aegis] 🔍   #${channel.name}: tidak bisa fetch langsung (${err.message})`);
+        return null;
+      });
+      if (!messages) continue;
+
       const spamMsgs = messages.filter(
         (m) =>
           m.author.id === userId &&
           Date.now() - m.createdTimestamp < windowMs &&
-          !deletedSet.has(m.id) // skip yang sudah dihapus sebelumnya
+          !deletedSet.has(m.id)
       );
 
       console.log(`[Aegis] 🔍   #${channel.name}: ${messages.size} fetched, ${spamMsgs.size} match (${deletedSet.size} sudah dihapus sebelumnya)`);
       for (const msg of spamMsgs.values()) {
-        collected.set(msg.id, msg); // Map otomatis deduplicate by ID
+        collected.set(msg.id, msg);
       }
     } catch (err) {
       console.error(`[Aegis] 🔍   Gagal fetch channel ${channelId}:`, err.message);
