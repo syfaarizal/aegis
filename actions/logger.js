@@ -105,6 +105,8 @@ async function logActions(client, guildId, actionSummary) {
     timeoutLine = `✅ Timeout **${formatDuration(actionSummary.timeout.duration)}**`;
   } else if (actionSummary.timeout.skipped) {
     timeoutLine = `⏭️ Timeout dilewati — Admin`;
+  } else if (actionSummary.timeout.reasonOnly) {
+    timeoutLine = `⏳ ${actionSummary.timeout.reasonOnly}`;
   } else if (actionSummary.timeout.reason) {
     timeoutLine = `⚠️ Gagal: ${actionSummary.timeout.reason}`;
   } else {

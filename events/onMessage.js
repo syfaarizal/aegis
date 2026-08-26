@@ -2,9 +2,20 @@ const { analyzeMessage } = require("../core/detector");
 const { enforce } = require("../actions/enforcer");
 const { logDetections, logActions } = require("../actions/logger");
 
-// Cooldown per user biar gak spam action (enforce hanya sekali per X detik)
-const enforceCooldown = new Map(); // userId → timestamp
+// Cooldown hanya untuk TIMEOUT, bukan untuk hapus pesan.
+// tracking per guild:userId → Set of deleted message IDs
+const deletedTracker = new Map(); // key: `${guildId}:${userId}` → Set<messageId>
 const COOLDOWN_MS = 10_000;
+
+function getDeletedSet(guildId, userId) {
+  const key = `${guildId}:${userId}`;
+  if (!deletedTracker.has(key)) deletedTracker.set(key, new Set());
+  return deletedTracker.get(key);
+}
+
+function clearDeletedSet(guildId, userId) {
+  deletedTracker.delete(`${guildId}:${userId}`);
+}
 
 /**
  * Handler utama untuk event messageCreate.
@@ -23,7 +34,6 @@ async function onMessage(client, message) {
     `[Aegis] 📨 ${tag} → #${channelName} | content: ${contentPreview} | attach: ${message.attachments.size}`
   );
 
-  // Pesan kosong tanpa attachment = kemungkinan intent belum aktif
   if (!message.content && message.attachments.size === 0) {
     console.log(`[Aegis] ⚠️  Pesan kosong dari ${tag} — cek MESSAGE CONTENT INTENT di Dev Portal`);
     return;
@@ -37,35 +47,41 @@ async function onMessage(client, message) {
       return;
     }
 
-    // Batch console log detections
     console.log(
       `[Aegis] 🚨 ${detections.length} deteksi spam dari ${tag} | tipe: ${detections.map((d) => d.type).join(", ")}`
     );
 
-    // Kirim 1 embed ringkasan deteksi (bukan per-detection)
     await logDetections(client, message, detections);
 
-    // Cek cooldown — enforce hanya sekali per batch
-    const lastEnforce = enforceCooldown.get(message.author.id) || 0;
-    const onCooldown = Date.now() - lastEnforce < COOLDOWN_MS;
+    // Cooldown hanya untuk TIMEOUT, bukan delete.
+    // Ini memastikan pesan spam baru tetap dihapus meskipun timeout masih cooldown.
+    const lastTimeout = (enforceCooldown.get(message.author.id) || 0);
+    const timeoutOnCooldown = Date.now() - lastTimeout < COOLDOWN_MS;
 
-    if (!onCooldown) {
+    if (!timeoutOnCooldown) {
       enforceCooldown.set(message.author.id, Date.now());
-
-      // Jalankan: collect → delete → timeout
-      const summary = await enforce(message.guild, detections[0], message);
-
-      // Cleanup cooldown setelah selesai
-      setTimeout(() => enforceCooldown.delete(message.author.id), COOLDOWN_MS);
-
-      // Kirim 1 embed hasil action
-      await logActions(client, message.guild.id, summary);
+      setTimeout(() => {
+        enforceCooldown.delete(message.author.id);
+        clearDeletedSet(message.guild.id, message.author.id);
+      }, COOLDOWN_MS);
     } else {
-      console.log(`[Aegis] ⏭️  ${tag} masih dalam cooldown enforce, skip action`);
+      console.log(`[Aegis] ⏭️  ${tag} timeout masih cooldown — delete pesan spam tetap jalan`);
     }
+
+    // Selalu enforce delete pesan spam (tidak terpengaruh cooldown timeout)
+    const summary = await enforce(
+      message.guild,
+      detections[0],
+      message,
+      getDeletedSet(message.guild.id, message.author.id),
+      timeoutOnCooldown // true = skip timeout call
+    );
+
+    await logActions(client, message.guild.id, summary);
   } catch (err) {
     console.error("[Aegis] Error saat proses pesan:", err);
   }
 }
 
 module.exports = { onMessage };
+

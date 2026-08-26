@@ -5,17 +5,19 @@ const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
 /**
  * Kumpulkan semua pesan spam dari channels yang terdampak.
- * Return array of Discord Message objects (deduplicated by message ID).
+ * Skip pesan yang sudah ada di deletedSet (agar tidak double-delete).
  */
-async function collectSpamMessages(guild, detection, triggerMessage) {
+async function collectSpamMessages(guild, detection, triggerMessage, deletedSet) {
   const collected = new Map(); // messageId → Message (biar gak dobel)
   const userId = detection.userId;
 
   console.log(`[Aegis] 🔍 Collect: userId=${userId}, hash=${detection.hash}, triggerMsg=${triggerMessage.id}`);
   console.log(`[Aegis] 🔍 Channels di detection: ${detection.channels.map((c) => `${c.id}(${c.name})`).join(", ")}`);
 
-  // Masukkan trigger message dulu
-  collected.set(triggerMessage.id, triggerMessage);
+  // Masukkan trigger message dulu (jika belum dihapus)
+  if (!deletedSet.has(triggerMessage.id)) {
+    collected.set(triggerMessage.id, triggerMessage);
+  }
 
   // Deduplicate channel IDs dari detection — channel bisa muncul >1x di entries
   const uniqueChannelIds = [...new Set(detection.channels.map((c) => c.id))];
@@ -45,10 +47,11 @@ async function collectSpamMessages(guild, detection, triggerMessage) {
       const spamMsgs = messages.filter(
         (m) =>
           m.author.id === userId &&
-          Date.now() - m.createdTimestamp < windowMs
+          Date.now() - m.createdTimestamp < windowMs &&
+          !deletedSet.has(m.id) // skip yang sudah dihapus sebelumnya
       );
 
-      console.log(`[Aegis] 🔍   #${channel.name}: ${messages.size} fetched, ${spamMsgs.size} match spammer+window`);
+      console.log(`[Aegis] 🔍   #${channel.name}: ${messages.size} fetched, ${spamMsgs.size} match (${deletedSet.size} sudah dihapus sebelumnya)`);
       for (const msg of spamMsgs.values()) {
         collected.set(msg.id, msg); // Map otomatis deduplicate by ID
       }
@@ -65,7 +68,7 @@ async function collectSpamMessages(guild, detection, triggerMessage) {
  * Hapus semua pesan spam dengan delay antar delete.
  * Pakai .catch() biar gak crash kalau pesan udah terlanjur dihapus.
  */
-async function deleteSpamMessages(messages, guildId) {
+async function deleteSpamMessages(messages, guildId, deletedSet) {
   let deleted = 0;
   const guildCfg = getGuildConfig(guildId);
   const deleteDelay = guildCfg ? guildCfg.deleteDelayMs : DELETE_DELAY_MS;
@@ -85,6 +88,7 @@ async function deleteSpamMessages(messages, guildId) {
       return err;
     });
     deleted++;
+    deletedSet.add(msg.id);
 
     if (deleted < messages.length) {
       await sleep(deleteDelay);
@@ -134,25 +138,37 @@ async function timeoutUser(guild, userId, guildId) {
 }
 
 /**
- * Main enforcer — collect → delete → timeout
+ * Main enforcer — collect → delete → timeout.
+ * deletedSet prevents double-deleting messages across multiple enforcement calls.
+ * skipTimeout: set true when user is on timeout cooldown.
  */
-async function enforce(guild, detection, triggerMessage) {
+async function enforce(guild, detection, triggerMessage, deletedSet, skipTimeout) {
   const summary = {
     messagesDeleted: 0,
     timeout: { applied: false, reason: null, skipped: false, duration: 0 },
   };
 
-  // 1. Collect semua pesan spam
-  const spamMessages = await collectSpamMessages(guild, detection, triggerMessage);
+  // 1. Collect semua pesan spam (skip yang sudah dihapus)
+  const spamMessages = await collectSpamMessages(guild, detection, triggerMessage, deletedSet);
   console.log(`[Aegis] 📦 Total ${spamMessages.length} pesan akan dihapus`);
 
-  // 2. Delete dengan delay
-  summary.messagesDeleted = await deleteSpamMessages(spamMessages, guild.id);
+  if (spamMessages.length === 0) {
+    console.log(`[Aegis] 📦 Semua pesan sudah dihapus sebelumnya`);
+    return summary;
+  }
 
-  // 3. Timeout — result sudah pakai { applied, reason, skipped, duration }
-  summary.timeout = await timeoutUser(guild, detection.userId, guild.id);
+  // 2. Delete dengan delay (track ID yang berhasil dihapus)
+  summary.messagesDeleted = await deleteSpamMessages(spamMessages, guild.id, deletedSet);
+
+  // 3. Timeout — skip jika sedang cooldown
+  if (skipTimeout) {
+    console.log(`[Aegis] ⏱️  Timeout dilewati — masih cooldown`);
+    summary.timeout = { applied: false, reason: null, skipped: false, duration: 0, reasonOnly: "Cooldown timeout" };
+  } else {
+    summary.timeout = await timeoutUser(guild, detection.userId, guild.id);
+  }
 
   return summary;
 }
 
-module.exports = { enforce };
+module.exports = { enforce, deleteSpamMessages, timeoutUser };
