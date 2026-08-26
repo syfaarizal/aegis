@@ -1,6 +1,5 @@
 const { EmbedBuilder } = require("discord.js");
 const { getGuildConfig } = require("../guildConfig");
-const { LOG_CHANNEL_ID } = require("../config");
 
 const TYPE_META = {
   text:  { emoji: "💬", color: 0xf5a623, label: "Teks Duplikat"   },
@@ -27,11 +26,12 @@ async function safeSend(channel, payload) {
 }
 
 /**
- * Kirim embed log ke guild-specific atau global log channel.
+ * Ambil guild-specific log channel. Tidak pernah fallback ke LOG_CHANNEL_ID.
+ * Jika guild belum set log channel, kembalikan null.
  */
-async function fetchLogChannel(client, guildId) {
+async function fetchGuildLogChannel(client, guildId) {
   const guildCfg = getGuildConfig(guildId);
-  const channelId = guildCfg && guildCfg.logChannelId ? guildCfg.logChannelId : LOG_CHANNEL_ID;
+  const channelId = guildCfg && guildCfg.logChannelId;
   if (!channelId) return null;
   try {
     return await client.channels.fetch(channelId);
@@ -48,7 +48,7 @@ async function logDetections(client, message, detections) {
   if (detections.length === 0) return;
 
   const guildId = message.guild.id;
-  const logChannel = await fetchLogChannel(client, guildId);
+  const logChannel = await fetchGuildLogChannel(client, guildId);
   if (!logChannel) return;
 
   const byType = {};
@@ -97,7 +97,7 @@ async function logDetections(client, message, detections) {
 async function logActions(client, guildId, actionSummary) {
   if (!actionSummary) return;
 
-  const logChannel = await fetchLogChannel(client, guildId);
+  const logChannel = await fetchGuildLogChannel(client, guildId);
   if (!logChannel) return;
 
   let timeoutLine;
@@ -134,4 +134,4 @@ async function logActions(client, guildId, actionSummary) {
   await safeSend(logChannel, { embeds: [embed] });
 }
 
-module.exports = { logDetections, logActions, fetchLogChannel };
+module.exports = { logDetections, logActions, fetchGuildLogChannel };
