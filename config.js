@@ -11,7 +11,9 @@ module.exports = {
   MIN_TEXT_LENGTH: 10,
 
   // Abaikan user yang punya role ini (nama role, case-insensitive)
-  IGNORED_ROLES: ["admin", "moderator", "mod", "staff"],
+  // NOTE: Semua role di-detect. Timeout immunity berdasarkan Discord permission "Administrator".
+  // Admin/mod/staff -> pesan dihapus, TIDAK di-timeout. User biasa -> dihapus + di-timeout.
+  IGNORED_ROLES: [],
 
   // ── Auto Delete ─────────────────────────────────────────
   // Delay antar delete (ms) biar gak kena rate limit Discord

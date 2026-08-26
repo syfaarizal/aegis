@@ -18,17 +18,23 @@ async function collectSpamMessages(guild, detection, triggerMessage) {
   const uniqueChannelIds = [...new Set(detection.channels.map((c) => c.id))];
   console.log(`[Aegis] 🔍 Scanning ${uniqueChannelIds.length} channel unik...`);
 
+  // Gunakan timestamp minimum dari detection sebagai window start
+  // Ini确保 pesan terdeteksi (bisa >30 detik lalu) ikut terhapus
+  const earliestTimestamp = Math.min(...detection.channels.map((c) => c.timestamp));
+  const windowMs = Date.now() - earliestTimestamp + 5_000; // +5s buffer
+  console.log(`[Aegis] ⏱️  Window scan: ${Math.round(windowMs / 1000)} detik`);
+
   for (const channelId of uniqueChannelIds) {
     try {
       const channel = await guild.channels.fetch(channelId).catch(() => null);
       if (!channel || !channel.isTextBased()) continue;
 
-      // Fetch 30 pesan terakhir, cari yang milik spammer dalam window waktu
+      // Fetch pesan yang milik spammer dalam window deteksi
       const messages = await channel.messages.fetch({ limit: 30 });
       const spamMsgs = messages.filter(
         (m) =>
           m.author.id === userId &&
-          Date.now() - m.createdTimestamp < 30_000 // perluas ke 30 detik
+          Date.now() - m.createdTimestamp < windowMs
       );
 
       for (const msg of spamMsgs.values()) {

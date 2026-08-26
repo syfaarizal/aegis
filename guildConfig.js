@@ -8,7 +8,7 @@ const DEFAULT_CONFIG = {
   detectionWindowMs: 15_000,
   duplicateChannelThreshold: 2,
   minTextLength: 10,
-  ignoredRoles: ["admin", "moderator", "mod", "staff"],
+  ignoredRoles: [],
   deleteDelayMs: 300,
   timeoutDurationMs: 5 * 60 * 1000,
   timeoutReason: "Aegis: Spam terdeteksi — pesan duplikat di multiple channel",

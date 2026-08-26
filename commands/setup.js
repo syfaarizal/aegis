@@ -17,7 +17,9 @@ function buildCurrentConfigEmbed(guildId, guildName, logChannel) {
   const window = cfg ? cfg.detectionWindowMs : DEFAULT_CONFIG.detectionWindowMs;
   const minLen = cfg ? cfg.minTextLength : DEFAULT_CONFIG.minTextLength;
   const timeout = cfg ? cfg.timeoutDurationMs : DEFAULT_CONFIG.timeoutDurationMs;
-  const ignoredRoles = cfg ? cfg.ignoredRoles.join(", ") : DEFAULT_CONFIG.ignoredRoles.join(", ");
+  const ignoredRoles = cfg && cfg.ignoredRoles && cfg.ignoredRoles.length > 0
+    ? cfg.ignoredRoles.join(", ")
+    : "(tidak ada — semua orang terdeteksi)";
 
   const logChannelLine = logChannel
     ? `${logChannel.name} (\`${logChannel.id}\`)`
