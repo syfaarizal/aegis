@@ -102,21 +102,28 @@ client.once("clientReady", async () => {
   // Kirim startup message ke log channel
   try {
     const logChannel = await client.channels.fetch(LOG_CHANNEL_ID);
-    const embed = new EmbedBuilder()
-      .setColor(0x2ecc71)
-      .setTitle("🛡️ Aegis — Online")
-      .setDescription("Bot aktif dan siap memantau server.")
-      .addFields(
-        { name: "⏰ Waktu", value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
-        { name: "📡 Status", value: "Memantau semua channel", inline: true }
-      )
-      .setFooter({ text: "Aegis Security", iconURL: client.user.displayAvatarURL() })
-      .setTimestamp();
+    if (!logChannel) {
+      console.warn("[Aegis] ⚠️  LOG_CHANNEL_ID tidak ditemukan atau tidak dapat diakses");
+    } else {
+      const embed = new EmbedBuilder()
+        .setColor(0x2ecc71)
+        .setTitle("🛡️ Aegis — Online")
+        .setDescription("Bot aktif dan siap memantau server.")
+        .addFields(
+          { name: "⏰ Waktu", value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+          { name: "📡 Status", value: "Memantau semua channel", inline: true }
+        )
+        .setFooter({ text: "Aegis Security", iconURL: client.user.displayAvatarURL() })
+        .setTimestamp();
 
-    await logChannel.send({ embeds: [embed] });
+      await logChannel.send({ embeds: [embed] });
+    }
   } catch (err) {
-    console.error("[Aegis] Gagal kirim startup message:", err.message);
-    console.error("        → Cek LOG_CHANNEL_ID di .env dan permission bot di channel tersebut.");
+    if (err.code === 50001) {
+      console.warn("[Aegis] ⚠️  Gagal kirim startup message — bot tidak punya akses ke LOG_CHANNEL_ID");
+    } else {
+      console.error("[Aegis] Gagal kirim startup message:", err.message);
+    }
   }
 });
 

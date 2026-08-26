@@ -8,16 +8,22 @@ const TYPE_META = {
   image: { emoji: "🖼️", color: 0x9b59b6, label: "Gambar Duplikat" },
 };
 
-function formatMs(ms) {
-  const minutes = Math.floor(ms / 60_000);
-  if (minutes < 60) return `${minutes} menit`;
-  return `${Math.floor(minutes / 60)} jam ${Math.floor(minutes % 60)} menit`;
-}
-
 function formatDuration(ms) {
   const minutes = Math.floor(ms / 60_000);
   if (minutes < 60) return `${minutes} menit`;
   return `${Math.floor(minutes / 60)} jam ${minutes % 60} menit`;
+}
+
+async function safeSend(channel, payload) {
+  try {
+    await channel.send(payload);
+  } catch (err) {
+    if (err.code === 50001) {
+      console.warn(`[Aegis] ⚠️  Gagal kirim log — bot tidak punya akses ke channel ${channel.id}`);
+    } else {
+      console.error(`[Aegis] Gagal kirim log:`, err.message);
+    }
+  }
 }
 
 /**
@@ -27,24 +33,24 @@ async function fetchLogChannel(client, guildId) {
   const guildCfg = getGuildConfig(guildId);
   const channelId = guildCfg && guildCfg.logChannelId ? guildCfg.logChannelId : LOG_CHANNEL_ID;
   if (!channelId) return null;
-  return client.channels.fetch(channelId).catch(() => null);
+  try {
+    return await client.channels.fetch(channelId);
+  } catch (err) {
+    console.warn(`[Aegis] ⚠️  Gagal akses log channel ${channelId}: ${err.message}`);
+    return null;
+  }
 }
 
 /**
  * Kirim 1 embed ringkasan deteksi per batch (bukan per detection).
- * Digunakan baik ada action maupun tidak.
  */
 async function logDetections(client, message, detections) {
   if (detections.length === 0) return;
 
   const guildId = message.guild.id;
   const logChannel = await fetchLogChannel(client, guildId);
-  if (!logChannel) {
-    console.log("[Aegis] ⚠️ Log channel tidak ditemukan — skip log");
-    return;
-  }
+  if (!logChannel) return;
 
-  // Aggregate per tipe
   const byType = {};
   for (const d of detections) {
     if (!byType[d.type]) byType[d.type] = { count: 0, channels: new Set() };
@@ -82,7 +88,7 @@ async function logDetections(client, message, detections) {
     .setTimestamp()
     .setFooter({ text: "Aegis Security", iconURL: client.user.displayAvatarURL() });
 
-  await logChannel.send({ embeds: [embed] });
+  await safeSend(logChannel, { embeds: [embed] });
 }
 
 /**
@@ -96,8 +102,8 @@ async function logActions(client, guildId, actionSummary) {
 
   let timeoutLine;
   if (actionSummary.timeout.applied) {
-    timeoutLine = `✅ Timeout **${formatDuration(actionSummary.timeoutDuration)}**`;
-  } else if (actionSummary.timeoutSkipped) {
+    timeoutLine = `✅ Timeout **${formatDuration(actionSummary.timeout.duration)}**`;
+  } else if (actionSummary.timeout.skipped) {
     timeoutLine = `⏭️ Timeout dilewati — Admin`;
   } else if (actionSummary.timeout.reason) {
     timeoutLine = `⚠️ Gagal: ${actionSummary.timeout.reason}`;
@@ -123,7 +129,7 @@ async function logActions(client, guildId, actionSummary) {
     .setTimestamp()
     .setFooter({ text: "Aegis Security", iconURL: client.user.displayAvatarURL() });
 
-  await logChannel.send({ embeds: [embed] });
+  await safeSend(logChannel, { embeds: [embed] });
 }
 
 module.exports = { logDetections, logActions, fetchLogChannel };
