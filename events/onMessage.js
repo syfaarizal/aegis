@@ -4,6 +4,7 @@ const { logDetections, logActions } = require("../actions/logger");
 
 // Cooldown hanya untuk TIMEOUT, bukan untuk hapus pesan.
 // tracking per guild:userId → Set of deleted message IDs
+const enforceCooldown = new Map(); // userId → timestamp
 const deletedTracker = new Map(); // key: `${guildId}:${userId}` → Set<messageId>
 const COOLDOWN_MS = 10_000;
 
