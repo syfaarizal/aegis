@@ -1,4 +1,5 @@
 const { DELETE_DELAY_MS, TIMEOUT_DURATION_MS, TIMEOUT_REASON } = require("../config");
+const { getGuildConfig } = require("../guildConfig");
 
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
@@ -47,21 +48,21 @@ async function collectSpamMessages(guild, detection, triggerMessage) {
  * Hapus semua pesan spam dengan delay antar delete.
  * Pakai .catch() biar gak crash kalau pesan udah terlanjur dihapus.
  */
-async function deleteSpamMessages(messages) {
+async function deleteSpamMessages(messages, guildId) {
   let deleted = 0;
+  const guildCfg = getGuildConfig(guildId);
+  const deleteDelay = guildCfg ? guildCfg.deleteDelayMs : DELETE_DELAY_MS;
 
   for (const msg of messages) {
     await msg.delete().catch((err) => {
-      // Abaikan error "Unknown Message" (udah dihapus) dan "Missing Permissions"
       if (err.code !== 10008) {
         console.error(`[Aegis] Gagal hapus pesan ${msg.id}:`, err.message);
       }
     });
     deleted++;
 
-    // Delay antar delete biar gak kena rate limit
     if (deleted < messages.length) {
-      await sleep(DELETE_DELAY_MS);
+      await sleep(deleteDelay);
     }
   }
 
@@ -73,12 +74,15 @@ async function deleteSpamMessages(messages) {
  * Timeout user yang spam.
  * Return { applied, reason }
  */
-async function timeoutUser(guild, userId) {
+async function timeoutUser(guild, userId, guildId) {
   try {
+    const guildCfg = getGuildConfig(guildId);
+    const timeoutDuration = guildCfg ? guildCfg.timeoutDurationMs : TIMEOUT_DURATION_MS;
+    const timeoutReason = guildCfg ? guildCfg.timeoutReason : TIMEOUT_REASON;
+
     const member = await guild.members.fetch(userId).catch(() => null);
     if (!member) return { applied: false, reason: "Member tidak ditemukan di server" };
 
-    // Cek canTimeout dan langsung return reason spesifik
     if (!guild.members.me) {
       return { applied: false, reason: "Bot tidak ditemukan sebagai member" };
     }
@@ -94,8 +98,8 @@ async function timeoutUser(guild, userId) {
       return { applied: false, reason: `Role bot (pos: ${botPos}) lebih rendah dari target (pos: ${targetPos})` };
     }
 
-    await member.timeout(TIMEOUT_DURATION_MS, TIMEOUT_REASON);
-    console.log(`[Aegis] ⏱️  ${member.user.tag} di-timeout ${TIMEOUT_DURATION_MS / 1000}s`);
+    await member.timeout(timeoutDuration, timeoutReason);
+    console.log(`[Aegis] ⏱️  ${member.user.tag} di-timeout ${timeoutDuration / 1000}s`);
     return { applied: true, reason: null };
   } catch (err) {
     console.error(`[Aegis] Gagal timeout user ${userId}:`, err.message);
@@ -117,10 +121,10 @@ async function enforce(guild, detection, triggerMessage) {
   console.log(`[Aegis] 📦 Total ${spamMessages.length} pesan akan dihapus`);
 
   // 2. Delete dengan delay
-  summary.messagesDeleted = await deleteSpamMessages(spamMessages);
+  summary.messagesDeleted = await deleteSpamMessages(spamMessages, guild.id);
 
   // 3. Timeout — result sudah pakai { applied, reason }
-  summary.timeout = await timeoutUser(guild, detection.userId);
+  summary.timeout = await timeoutUser(guild, detection.userId, guild.id);
 
   return summary;
 }

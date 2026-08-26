@@ -27,4 +27,14 @@ module.exports = {
   // ── Credentials ─────────────────────────────────────────
   LOG_CHANNEL_ID: process.env.LOG_CHANNEL_ID,
   BOT_TOKEN: process.env.BOT_TOKEN,
+
+  // ── Guild Config ────────────────────────────────────────
+  getGuildConfig(guildId) {
+    try {
+      const { getGuildConfig: get } = require("./guildConfig");
+      return get(guildId);
+    } catch {
+      return null;
+    }
+  },
 };

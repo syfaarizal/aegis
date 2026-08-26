@@ -2,8 +2,8 @@ const { DETECTION_WINDOW_MS } = require("../config");
 
 const store = new Map();
 
-function record(userId, hash, channelId, channelName) {
-  const key = `${userId}:${hash}`;
+function record(guildId, userId, hash, channelId, channelName) {
+  const key = `${guildId}:${userId}:${hash}`;
   const now = Date.now();
 
   // Ambil existing entries dan filter yang sudah expired
@@ -26,9 +26,9 @@ function record(userId, hash, channelId, channelName) {
   return entries;
 }
 
-function clearUser(userId) {
+function clearUser(guildId, userId) {
   for (const key of store.keys()) {
-    if (key.startsWith(`${userId}:`)) store.delete(key);
+    if (key.startsWith(`${guildId}:${userId}:`)) store.delete(key);
   }
 }
 
